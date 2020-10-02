@@ -15,7 +15,8 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
-
+#include <stdio.h>
+#include <sys/types.h>
 
 #define TCP_PORT 8000
 
@@ -48,8 +49,7 @@ int main(int argc, const char * argv[])
     char buffer[1000];
     
     int cliente;
-    socklen_t escritos;
-    ssize_t leidos;
+    ssize_t leidos, escritos;
     
     if (argc != 2) {
         printf("Use: %s IP_Servidor \n", argv[0]);
@@ -67,11 +67,19 @@ int main(int argc, const char * argv[])
     escritos = connect(cliente, (struct sockaddr *) &direccion, sizeof(direccion));
     
     if (escritos == 0) {
+        printf("PID del semaforo: %d\n",getpid());
+
+        sprintf(buffer,"%d",getpid());
+        write(cliente,&buffer,sizeof(buffer));
+        
+        int next;
+        read(cliente, &buffer, sizeof(buffer));
+        next = atoi(buffer);
+        printf("PID de semaforo siguiente %d\n", next);
+
         printf("Conectado a %s:%d \n",
                inet_ntoa(direccion.sin_addr),
                ntohs(direccion.sin_port));
-
-        printf("PID %d",getpid());
 
         // struct sigaction gestor;
     

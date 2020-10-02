@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -16,6 +17,7 @@
 #include <unistd.h>
 
 #define TCP_PORT 8000
+#define SEMAFOROS 4
 
 int main(int argc, const char * argv[])
 {
@@ -23,11 +25,13 @@ int main(int argc, const char * argv[])
     char buffer[1000];
     
     int servidor, cliente;
-    socklen_t escritos;
-    ssize_t leidos;
+    ssize_t leidos, escritos;
     int continuar = 1;
+
     pid_t pid;
     
+    int * pids = malloc(SEMAFOROS*sizeof(int));
+    int * clientes = malloc(SEMAFOROS*sizeof(int));
     if (argc != 2) {
         printf("Use: %s IP_Servidor \n", argv[0]);
         exit(-1);
@@ -48,22 +52,40 @@ int main(int argc, const char * argv[])
     
     escritos = sizeof(direccion);
     
-    printf("PID %d",getpid());
+    printf("PID %d\n",getpid());
     // Aceptar conexiones
-    while (continuar)
+    int i = 0;
+    while (i<SEMAFOROS)
     {
-        cliente = accept(servidor, (struct sockaddr *) &direccion, &escritos);
+
+        *(clientes+i) = accept(servidor, (struct sockaddr *) &direccion, &escritos);
         
         printf("Aceptando conexiones en %s:%d \n",
                inet_ntoa(direccion.sin_addr),
                ntohs(direccion.sin_port));
         
+        read(*(clientes+i),&buffer,sizeof(buffer));
+        *(pids+i) = atoi(buffer);
+        printf("Semaforo %d con PID %d creado\n",i+1,*(pids+i));
+        i++;
         pid = fork();
         
         if (pid == 0) continuar = 0;
         
     }
-    
+    int * aux = pids;
+    int * auxclient = clientes;
+
+    for(aux=pids+2; auxclient<clientes+SEMAFOROS; aux++, auxclient++){
+        if(aux==pids+SEMAFOROS){
+            sprintf(buffer, "%d", *(pids));
+            write(*auxclient, &buffer, sizeof(buffer));
+        }
+        else{
+            sprintf(buffer, "%d", *(aux));
+            write(*auxclient, &buffer, sizeof(buffer));
+        }
+    }
     if (pid == 0) {
         
         close(servidor);
@@ -81,7 +103,7 @@ int main(int argc, const char * argv[])
                 write(fileno(stdout), &buffer, leidos);
             }
         }
-        
+        free(aux);
         close(cliente);
     }
     
@@ -93,6 +115,8 @@ int main(int argc, const char * argv[])
         close(servidor);
         
     }
+    free(pids);
+    
     return 0;
 }
 
