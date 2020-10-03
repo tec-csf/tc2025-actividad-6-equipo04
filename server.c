@@ -100,26 +100,31 @@ int main(int argc, const char * argv[])
     
     escritos = sizeof(direccion);
     
-    int cliente[SEMAFOROS];
+    //int cliente[SEMAFOROS];
     char semaforo[SEMAFOROS][50];
     ssize_t pidInputSizes[SEMAFOROS];
     
-    for (int i = 0; i<SEMAFOROS; ++i) {
-        cliente[i] = accept(servidor, (struct sockaddr *) &direccion, &escritos);
+    int * pids = malloc(SEMAFOROS*sizeof(int));
+    int * clientes = malloc(SEMAFOROS*sizeof(int));
+    int i = 0;
+
+    while (i < SEMAFOROS)
+    {
+        *(clientes+i) = accept(servidor, (struct sockaddr *) &direccion, &escritos);
+        
         printf("Aceptando conexiones en %s:%d \n",
-               inet_ntoa(direccion.sin_addr),
-               ntohs(direccion.sin_port));
-        
+            inet_ntoa(direccion.sin_addr),
+            ntohs(direccion.sin_port));
+
         pid = fork();
-        
         if (pid == 0) {
-            cliente_semaforo = cliente[i]; 
+            cliente_semaforo = *(clientes+i); 
             signal(SIGTSTP, stopSignal);
             signal(SIGINT, intermitenSignal);
 
             close(servidor);
             if (cliente_semaforo >= 0) {
-                while(leidos = read(cliente[i], &buffer, sizeof(buffer))) {
+                while(leidos = read(*(clientes+i), &buffer, sizeof(buffer))) {
                     printState(i); 
                 }
             }
@@ -127,18 +132,19 @@ int main(int argc, const char * argv[])
             close(cliente_semaforo);
         }
         else {
-            pidInputSizes[i] = read(cliente[i], &semaforo[i], sizeof(semaforo[i]));
+            pidInputSizes[i] = read(*(clientes+i), &semaforo[i], sizeof(semaforo[i]));
         }
-    }
+    i++;
+}
 
     if (pid > 0) {
        for (int i = 0; i < SEMAFOROS; ++i) {
             int nextClient = (i + 1) % SEMAFOROS;
-            write(cliente[i], &semaforo[nextClient], pidInputSizes[nextClient]);
+            write(*(clientes + i), &semaforo[nextClient], pidInputSizes[nextClient]);
         }
        
         char init_message[] = "START"; 
-        write(cliente[0], &init_message, sizeof(init_message));
+        write(*(clientes), &init_message, sizeof(init_message));
 
         while (wait(NULL) != -1);
         
