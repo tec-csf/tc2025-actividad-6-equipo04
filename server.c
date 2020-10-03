@@ -100,10 +100,8 @@ int main(int argc, const char * argv[])
     
     escritos = sizeof(direccion);
     
-    //int cliente[SEMAFOROS];
     char semaforo[SEMAFOROS][50];
     ssize_t pidInputSizes[SEMAFOROS];
-    
     int * pids = malloc(SEMAFOROS*sizeof(int));
     int * clientes = malloc(SEMAFOROS*sizeof(int));
     int i = 0;
@@ -132,7 +130,8 @@ int main(int argc, const char * argv[])
             close(cliente_semaforo);
         }
         else {
-            pidInputSizes[i] = read(*(clientes+i), &semaforo[i], sizeof(semaforo[i]));
+             pidInputSizes[i] = read(*(clientes + i), &semaforo[i], sizeof(semaforo[i]));
+            // *(pids + i) = read(*(clientes+i), &semaforo[i], sizeof(semaforo[i]));
         }
     i++;
 }
@@ -141,6 +140,7 @@ int main(int argc, const char * argv[])
        for (int i = 0; i < SEMAFOROS; ++i) {
             int nextClient = (i + 1) % SEMAFOROS;
             write(*(clientes + i), &semaforo[nextClient], pidInputSizes[nextClient]);
+            //  write(*(clientes + i), &semaforo[nextClient], *(pids + nextClient));
         }
        
         char init_message[] = "START"; 
