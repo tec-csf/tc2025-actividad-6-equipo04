@@ -7,31 +7,80 @@
 //
 
 #include <stdio.h>
-#include <string.h>
-#include <sys/time.h>
-#include <sys/wait.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #define TCP_PORT 8000
 #define SEMAFOROS 4
 
+int cliente_semaforo; //Accesso global a un semaforo cliente dado
+int interrupcion; //Interrupción actual de consola ([o]Ninguna, [1]Interrupción Rojo, [2]Interrupción Intermitente)
+
+void printState(int semaforo) {
+    printf("Cambio de estado\n");
+    printf("----------------\n");
+    for (int i=0; i<SEMAFOROS; ++i) {
+        if (i == semaforo)
+            printf("Semaforo %d: VERDE\n", i+1);
+        else 
+            printf("Semaforo %d: ROJO\n", i+1);
+    }
+    printf("\n");
+}
+
+void stopSignal(int signal) {
+    char interruption[] = "STOP"; 
+    write(cliente_semaforo, &interruption, sizeof(interruption));
+}
+
+void intermitenSignal(int signal) {
+    char interruption[] = "INTERMITENT"; 
+    write(cliente_semaforo, &interruption, sizeof(interruption));
+}
+
+void consoleInterruption(int signal) {
+    char state[15];
+
+    if (signal == 20 && interrupcion != 1) {
+        interrupcion = 1;
+        strcpy(state, "ROJO");
+    } else if (signal == 2 && interrupcion != 2) {
+        interrupcion = 2;
+        strcpy(state, "INTERMITENTE");
+    } else {
+        interrupcion = 0;
+        printf("\nReanudando\n\n");
+        return;
+    }
+
+    printf("\nInterrupción\n");
+    printf("------------\n");
+    for (int i=0; i<SEMAFOROS; ++i) {
+        printf("Semaforo %d: %s\n", i+1, state);
+    }
+}
+
 int main(int argc, const char * argv[])
 {
+    signal(SIGTSTP, consoleInterruption);
+    signal(SIGINT, consoleInterruption);
+
     struct sockaddr_in direccion;
     char buffer[1000];
     
-    int servidor, cliente;
+    int servidor;
+    
     ssize_t leidos, escritos;
     int continuar = 1;
-
     pid_t pid;
     
-    int * pids = malloc(SEMAFOROS*sizeof(int));
-    int * clientes = malloc(SEMAFOROS*sizeof(int));
     if (argc != 2) {
         printf("Use: %s IP_Servidor \n", argv[0]);
         exit(-1);
@@ -39,7 +88,6 @@ int main(int argc, const char * argv[])
     
     // Crear el socket
     servidor = socket(PF_INET, SOCK_STREAM, 0);
-    
     // Enlace con el socket
     inet_aton(argv[1], &direccion.sin_addr);
     direccion.sin_port = htons(TCP_PORT);
@@ -48,76 +96,56 @@ int main(int argc, const char * argv[])
     bind(servidor, (struct sockaddr *) &direccion, sizeof(direccion));
     
     // Escuhar
-    listen(servidor, 10);
+    listen(servidor, SEMAFOROS);
     
     escritos = sizeof(direccion);
     
-    printf("PID %d\n",getpid());
-    // Aceptar conexiones
-    int i = 0;
-    while (i<SEMAFOROS)
-    {
-
-        *(clientes+i) = accept(servidor, (struct sockaddr *) &direccion, &escritos);
-        
+    int cliente[SEMAFOROS];
+    char semaforo[SEMAFOROS][50];
+    ssize_t pidInputSizes[SEMAFOROS];
+    
+    for (int i = 0; i<SEMAFOROS; ++i) {
+        cliente[i] = accept(servidor, (struct sockaddr *) &direccion, &escritos);
         printf("Aceptando conexiones en %s:%d \n",
                inet_ntoa(direccion.sin_addr),
                ntohs(direccion.sin_port));
         
-        read(*(clientes+i),&buffer,sizeof(buffer));
-        *(pids+i) = atoi(buffer);
-        printf("Semaforo %d con PID %d creado\n",i+1,*(pids+i));
-        i++;
         pid = fork();
         
-        if (pid == 0) continuar = 0;
-        
-    }
-    int * aux = pids;
-    int * auxclient = clientes;
+        if (pid == 0) {
+            cliente_semaforo = cliente[i]; 
+            signal(SIGTSTP, stopSignal);
+            signal(SIGINT, intermitenSignal);
 
-    for(aux=pids+2; auxclient<clientes+SEMAFOROS; aux++, auxclient++){
-        if(aux==pids+SEMAFOROS){
-            sprintf(buffer, "%d", *(pids));
-            write(*auxclient, &buffer, sizeof(buffer));
-        }
-        else{
-            sprintf(buffer, "%d", *(aux));
-            write(*auxclient, &buffer, sizeof(buffer));
-        }
-    }
-    if (pid == 0) {
-        
-        close(servidor);
-        
-        if (cliente >= 0) {
-            
-            // Leer datos del socket
-            while (leidos = read(cliente, &buffer, sizeof(buffer))) {
-                printf("Llegue aqui nenes");
-                write(fileno(stdout), &buffer, leidos);
-                
-                /* Leer de teclado y escribir en el socket */
-                leidos = read(fileno(stdin), &buffer, sizeof(buffer));
-                write(cliente, &buffer, leidos);
-                write(fileno(stdout), &buffer, leidos);
+            close(servidor);
+            if (cliente_semaforo >= 0) {
+                while(leidos = read(cliente[i], &buffer, sizeof(buffer))) {
+                    printState(i); 
+                }
             }
+            
+            close(cliente_semaforo);
         }
-        free(aux);
-        close(cliente);
+        else {
+            pidInputSizes[i] = read(cliente[i], &semaforo[i], sizeof(semaforo[i]));
+        }
     }
-    
-    else if (pid > 0)
-    {
+
+    if (pid > 0) {
+       for (int i = 0; i < SEMAFOROS; ++i) {
+            int nextClient = (i + 1) % SEMAFOROS;
+            write(cliente[i], &semaforo[nextClient], pidInputSizes[nextClient]);
+        }
+       
+        char init_message[] = "START"; 
+        write(cliente[0], &init_message, sizeof(init_message));
+
         while (wait(NULL) != -1);
         
         // Cerrar sockets
         close(servidor);
         
     }
-    free(pids);
-    
     return 0;
 }
-
 

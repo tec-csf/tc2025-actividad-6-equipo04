@@ -7,48 +7,46 @@
 //  Copyright © 2015 Vicente Cubells Nonell. All rights reserved.
 //
 
-
 #include <stdio.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <signal.h>
-#include <stdio.h>
 #include <sys/types.h>
 
 #define TCP_PORT 8000
+#define TIEMPO 30
 
-void gestor_ctrlc1(int sid)
-{
-    printf("Estoy aprendiendo a manejar señales...\n");
+int cliente; 
+int next_pid;
+int estado;  
+int interrupcion; 
+
+void cambio(int signal) {
+    estado = 1;
+    char state[] = "VERDE"; 
+    write(cliente, &state, sizeof(state));
+    alarm(TIEMPO);
 }
 
-void gestor_ctrlc2(int sid)
-{
-    printf("Ahora cambié de manejador...\n");
-}
-
-void contar(char * texto,  void (* handler_t)(int))
-{
-    struct sigaction gestor;
-    
-    gestor.sa_handler = handler_t ; // signal(SIGINT, handler_t);
-    
-    sigaction(SIGINT, &gestor, NULL);
-    
-    printf("%s",texto);
-    
+void sigSemaforo(int signal) {
+    estado = 0;
+    kill(next_pid, SIGUSR1);
 }
 
 int main(int argc, const char * argv[])
-{
+{   
+    sigset_t conjunto, pendientes;
+    sigemptyset(&conjunto);
+    sigaddset(&conjunto, SIGALRM);
+    sigaddset(&conjunto, SIGUSR1);
 
     struct sockaddr_in direccion;
     char buffer[1000];
     
-    int cliente;
     ssize_t leidos, escritos;
     
     if (argc != 2) {
@@ -58,7 +56,6 @@ int main(int argc, const char * argv[])
     
     // Crear el socket
     cliente = socket(PF_INET, SOCK_STREAM, 0);
-    
     // Establecer conexión
     inet_aton(argv[1], &direccion.sin_addr);
     direccion.sin_port = htons(TCP_PORT);
@@ -67,37 +64,32 @@ int main(int argc, const char * argv[])
     escritos = connect(cliente, (struct sockaddr *) &direccion, sizeof(direccion));
     
     if (escritos == 0) {
-        printf("PID del semaforo: %d\n",getpid());
-
-        sprintf(buffer,"%d",getpid());
-        write(cliente,&buffer,sizeof(buffer));
-        
-        int next;
-        read(cliente, &buffer, sizeof(buffer));
-        next = atoi(buffer);
-        printf("PID de semaforo siguiente %d\n", next);
-
         printf("Conectado a %s:%d \n",
                inet_ntoa(direccion.sin_addr),
                ntohs(direccion.sin_port));
 
-        // struct sigaction gestor;
-    
-        // sigaction(SIGINT, NULL, &gestor);
-    
-        /* Bloque 1 Contando ovejitas */
-        //contar("\n ovejitas", gestor_ctrlc1);
+        sprintf(buffer,"%d",getpid());
+        write(cliente, buffer, sizeof(int));
+        leidos = read(cliente, &buffer, sizeof(buffer));
+        next_pid = atoi(buffer);
 
-        //contar("\n trineos", gestor_ctrlc2);
-        //printf("Restaurando manejador inicial...\n");
-        //sigaction(SIGINT, &gestor, NULL);
+       signal(SIGUSR1, cambio);
+        signal(SIGALRM, sigSemaforo);
 
-        // Escribir datos en el socket
-        while ((leidos = read(fileno(stdin), &buffer, sizeof(buffer)))) {
-            write(cliente, &buffer, leidos);
-            /* Lee del buffer y escribe en pantalla */
-            leidos = read(cliente, &buffer, sizeof(buffer) );
-            write(fileno(stdout), &buffer, leidos);
+       while (leidos = read(cliente, &buffer, sizeof(buffer))) {
+            if (strcmp(buffer, "START") == 0) {
+                raise(SIGUSR1);
+            } else if (strcmp(buffer, "STOP") == 0 && interrupcion != 2) {
+                interrupcion = 2;
+                sigprocmask(SIG_BLOCK, &conjunto, NULL);
+            } else if (strcmp(buffer, "INTERMITENT") == 0 && interrupcion != 3) {
+                interrupcion = 3;
+               sigprocmask(SIG_BLOCK, &conjunto, NULL);
+            }
+            else {
+                interrupcion = 0;
+                sigprocmask(SIG_UNBLOCK, &conjunto, NULL);
+            }
         }
     }
     
@@ -106,5 +98,4 @@ int main(int argc, const char * argv[])
     
     return 0;
 }
-
 
